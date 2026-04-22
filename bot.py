@@ -1,4 +1,5 @@
 import json
+import html
 import logging
 import os
 import re
@@ -276,10 +277,10 @@ async def run_vocab_question(update: Update, state: SessionState) -> None:
         state.phase = "logic_quiz"
         await update.message.reply_text("Тест по словам завершен. Теперь вопросы на логику и расчет.")
         for i, question in enumerate(state.logic_questions, start=1):
-            spoiler_text = f"||{question.question_text}||"
+            spoiler_text = html.escape(question.question_text)
             await update.message.reply_text(
-                f"Вопрос {i} (текст можно открыть): {spoiler_text}",
-                parse_mode=ParseMode.MARKDOWN_V2,
+                f"Вопрос {i} (текст можно открыть): <tg-spoiler>{spoiler_text}</tg-spoiler>",
+                parse_mode=ParseMode.HTML,
             )
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".opus") as tmp_voice:
@@ -374,55 +375,63 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await run_logic_question(update, state)
         return
 
-    state.source_text = incoming
-    await update.message.reply_text("Анализирую текст и готовлю перевод с учебными материалами...")
+    try:
+        state.source_text = incoming
+        await update.message.reply_text("Анализирую текст и готовлю перевод с учебными материалами...")
 
-    data = analyze_text_for_japanese_learning(incoming)
-    state.japanese_text = str(data.get("japanese_translation", "")).strip()
-    state.vocab = list(data.get("vocab", []))
-    state.vocab_questions = build_vocab_questions(state.vocab)
-    state.vocab_idx = 0
-    state.logic_idx = 0
-    state.stars = 0
-    state.points = 0
-    state.phase = "vocab_quiz"
+        data = analyze_text_for_japanese_learning(incoming)
+        state.japanese_text = str(data.get("japanese_translation", "")).strip()
+        state.vocab = list(data.get("vocab", []))
+        state.vocab_questions = build_vocab_questions(state.vocab)
+        state.vocab_idx = 0
+        state.logic_idx = 0
+        state.stars = 0
+        state.points = 0
+        state.phase = "vocab_quiz"
 
-    comment_ru = str(data.get("comment_ru", "")).strip()
-    await update.message.reply_text(f"Перевод на японский:\n\n{state.japanese_text}")
-    if comment_ru:
-        await update.message.reply_text(f"Комментарий: {comment_ru}")
+        comment_ru = str(data.get("comment_ru", "")).strip()
+        await update.message.reply_text(f"Перевод на японский:\n\n{state.japanese_text}")
+        if comment_ru:
+            await update.message.reply_text(f"Комментарий: {comment_ru}")
 
-    if state.vocab:
-        lines = []
-        for i, item in enumerate(state.vocab, start=1):
-            word = item.get("word", "")
-            reading = item.get("reading_hiragana", "")
-            tr = item.get("translation_ru", "")
-            note = item.get("base_form_note", "")
-            reading_part = f" [{reading}]" if reading else ""
-            note_part = f" ({note})" if note else ""
-            lines.append(f"{i}. {word}{reading_part} - {tr}{note_part}")
-        await update.message.reply_text("Словарь:\n" + "\n".join(lines))
-    else:
-        await update.message.reply_text("Словарь не удалось составить, переходим к озвучке и вопросам.")
+        if state.vocab:
+            lines = []
+            for i, item in enumerate(state.vocab, start=1):
+                word = item.get("word", "")
+                reading = item.get("reading_hiragana", "")
+                tr = item.get("translation_ru", "")
+                note = item.get("base_form_note", "")
+                reading_part = f" [{reading}]" if reading else ""
+                note_part = f" ({note})" if note else ""
+                lines.append(f"{i}. {word}{reading_part} - {tr}{note_part}")
+            await update.message.reply_text("Словарь:\n" + "\n".join(lines))
+        else:
+            await update.message.reply_text("Словарь не удалось составить, переходим к озвучке и вопросам.")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".opus") as tmp_voice:
-        synthesize_japanese_voice(state.japanese_text, tmp_voice.name)
-        with Path(tmp_voice.name).open("rb") as f:
-            await update.message.reply_voice(
-                voice=InputFile(f), caption="Озвучка японского перевода"
-            )
-        Path(tmp_voice.name).unlink(missing_ok=True)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".opus") as tmp_voice:
+            synthesize_japanese_voice(state.japanese_text, tmp_voice.name)
+            with Path(tmp_voice.name).open("rb") as f:
+                await update.message.reply_voice(
+                    voice=InputFile(f), caption="Озвучка японского перевода"
+                )
+            Path(tmp_voice.name).unlink(missing_ok=True)
 
-    state.logic_questions = generate_logic_questions(state.japanese_text)
+        state.logic_questions = generate_logic_questions(state.japanese_text)
 
-    if state.vocab_questions:
-        await update.message.reply_text("Начинаем тест по словам.")
-        await run_vocab_question(update, state)
-    else:
-        state.phase = "logic_quiz"
-        await update.message.reply_text("Переходим к вопросам на логику и расчет.")
-        await run_vocab_question(update, state)
+        if state.vocab_questions:
+            await update.message.reply_text("Начинаем тест по словам.")
+            await run_vocab_question(update, state)
+        else:
+            state.phase = "logic_quiz"
+            await update.message.reply_text("Переходим к вопросам на логику и расчет.")
+            await run_vocab_question(update, state)
+    except Exception as exc:
+        logger.exception("Failed to process user text: %s", exc)
+        state.phase = "idle"
+        await update.message.reply_text(
+            "Не удалось обработать текст из-за ошибки API/сети. "
+            "Попробуй еще раз или проверь /health."
+        )
 
 
 def main() -> None:
