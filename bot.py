@@ -438,7 +438,9 @@ def main() -> None:
 
     request = HTTPXRequest(**request_kwargs)
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request).build()
-    check_openai_api()
+    # Do not fail startup if OpenAI is temporarily unavailable.
+    # Connectivity can be checked via /health command.
+    # check_openai_api()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("score", score))
