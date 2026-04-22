@@ -32,8 +32,13 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+def sanitize_secret(value: str) -> str:
+    # Remove accidental spaces/newlines copied from dashboards.
+    return re.sub(r"\s+", "", (value or "").strip())
+
+
+TELEGRAM_BOT_TOKEN = sanitize_secret(os.getenv("TELEGRAM_BOT_TOKEN", ""))
+OPENAI_API_KEY = sanitize_secret(os.getenv("OPENAI_API_KEY", ""))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
