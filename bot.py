@@ -85,6 +85,7 @@ class SessionState:
     stars: int = 0
     points: int = 0
     phase: str = "idle"
+    used_yojijukugo: List[str] = field(default_factory=list)
 
 
 USER_STATE: Dict[int, SessionState] = {}
@@ -205,6 +206,62 @@ def get_yojijukugo_card() -> Dict[str, str]:
     return ai_json(prompt)
 
 
+def get_unique_yojijukugo_card(used_phrases: List[str]) -> Dict[str, str]:
+    excluded = ", ".join(used_phrases) if used_phrases else "нет"
+    prompt = f"""
+Дай один японский фразеологизм/ёдзидзюкуго, который НЕ входит в список:
+{excluded}
+
+Важно:
+- Не повторяй фразеологизмы из списка исключений.
+- Если список большой, все равно выбери новый.
+
+Верни JSON:
+{{
+  "phrase": "四字熟語",
+  "reading": "ひらがな",
+  "meaning_ru": "краткий смысл на русском",
+  "example_jp": "короткий пример на японском",
+  "example_ru": "перевод примера на русском"
+}}
+"""
+    return ai_json(prompt)
+
+
+def judge_logic_answer_with_ai(
+    question_text: str, expected_answer: str, user_answer: str
+) -> Dict[str, Any]:
+    prompt = f"""
+Ты проверяешь ответ ученика на логико-математический вопрос по японскому тексту.
+
+Вопрос:
+{question_text}
+
+Ожидаемый эталонный ответ:
+{expected_answer}
+
+Ответ ученика:
+{user_answer}
+
+Проверь мягко:
+- Если ответ по смыслу правильный, даже если формулировка другая, это "correct".
+- Если частично верно или есть мелкая неточность, это "partial".
+- Если неверно, это "incorrect".
+
+Верни строго JSON:
+{{
+  "verdict": "correct|partial|incorrect",
+  "feedback_ru": "короткий комментарий на русском"
+}}
+"""
+    data = ai_json(prompt)
+    verdict = str(data.get("verdict", "incorrect")).strip().lower()
+    if verdict not in {"correct", "partial", "incorrect"}:
+        verdict = "incorrect"
+    feedback = str(data.get("feedback_ru", "")).strip()
+    return {"verdict": verdict, "feedback_ru": feedback}
+
+
 def synthesize_japanese_voice(text: str, filename: str) -> str:
     with client.audio.speech.with_streaming_response.create(
         model=OPENAI_TTS_MODEL,
@@ -318,12 +375,14 @@ async def run_logic_question(update: Update, state: SessionState) -> None:
 
 
 async def finish_session(update: Update, state: SessionState) -> None:
-    card = get_yojijukugo_card()
+    card = get_unique_yojijukugo_card(state.used_yojijukugo)
     phrase = card.get("phrase", "一期一会")
     reading = card.get("reading", "いちごいちえ")
     meaning_ru = card.get("meaning_ru", "Цени каждую встречу как уникальную.")
     example_jp = card.get("example_jp", "一期一会の気持ちで、今日を大切にしよう。")
     example_ru = card.get("example_ru", "С настроем «один шанс, одна встреча» ценим этот день.")
+    if phrase and phrase not in state.used_yojijukugo:
+        state.used_yojijukugo.append(phrase)
 
     state.phase = "done"
     rank = "Новичок"
@@ -371,11 +430,26 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if state.phase == "logic_quiz":
         q = state.logic_questions[state.logic_idx]
-        if normalize(incoming) == normalize(q.answer):
+        judged = judge_logic_answer_with_ai(q.question_text, q.answer, incoming)
+        verdict = judged.get("verdict", "incorrect")
+        feedback = judged.get("feedback_ru", "")
+        if verdict == "correct":
             state.points += 4
-            await update.message.reply_text("✅ Верный ответ! +4 балла")
+            text = "✅ Ответ принят как верный по смыслу! +4 балла"
+            if feedback:
+                text += f"\nКомментарий: {feedback}"
+            await update.message.reply_text(text)
+        elif verdict == "partial":
+            state.points += 2
+            text = "🟨 Частично верно. +2 балла"
+            if feedback:
+                text += f"\nКомментарий: {feedback}"
+            await update.message.reply_text(text)
         else:
-            await update.message.reply_text(f"❌ Неверно. Верный ответ: {q.answer}")
+            text = f"❌ Пока неверно. Эталон: {q.answer}"
+            if feedback:
+                text += f"\nКомментарий: {feedback}"
+            await update.message.reply_text(text)
         state.logic_idx += 1
         await run_logic_question(update, state)
         return
