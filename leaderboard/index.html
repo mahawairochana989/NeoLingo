@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NeoLingo Leaderboard · Course 1</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>NeoLingo · Лидерборд результатов</h1>
+      <p>Курс 1 содержит 8 уроков. Таблица, графики и ответы фиксируются локально в браузере.</p>
+    </header>
+
+    <main class="container">
+      <section class="card hero">
+        <div>
+          <h2>Курс 1 · 8 уроков</h2>
+          <p id="lesson-status">Прогресс по урокам будет показан после добавления результатов.</p>
+        </div>
+        <div class="hero-badges">
+          <span class="badge">Локальный режим</span>
+          <span class="badge">Таблица + графики</span>
+          <span class="badge">Логи ответов</span>
+        </div>
+      </section>
+
+      <section class="grid stats">
+        <article class="card stat">
+          <p>Учеников</p>
+          <strong id="stat-users">0</strong>
+        </article>
+        <article class="card stat">
+          <p>Записей ответов</p>
+          <strong id="stat-records">0</strong>
+        </article>
+        <article class="card stat">
+          <p>Средний балл</p>
+          <strong id="stat-score">0</strong>
+        </article>
+        <article class="card stat">
+          <p>Точность ответов</p>
+          <strong id="stat-accuracy">0%</strong>
+        </article>
+      </section>
+
+      <section class="card">
+        <h3>Добавить результат из Telegram-бота</h3>
+        <form id="result-form" class="form-grid">
+          <label>Пользователь
+            <input id="f-user" required placeholder="например, Polina" />
+          </label>
+          <label>Урок (курс 1)
+            <select id="f-lesson" required></select>
+          </label>
+          <label>Тип задания
+            <select id="f-type" required>
+              <option value="translation">Перевод</option>
+              <option value="vocab_quiz">Словарь/вокабуляр</option>
+              <option value="logic_quiz">Логика/математика</option>
+            </select>
+          </label>
+          <label>Баллы
+            <input id="f-points" type="number" min="0" max="100" required value="0" />
+          </label>
+          <label>Звезды
+            <input id="f-stars" type="number" min="0" max="100" required value="0" />
+          </label>
+          <label>Корректность
+            <select id="f-correct" required>
+              <option value="correct">Верно</option>
+              <option value="partial">Частично</option>
+              <option value="incorrect">Неверно</option>
+            </select>
+          </label>
+          <label>Длительность (сек)
+            <input id="f-duration" type="number" min="0" value="0" />
+          </label>
+          <label>Дата/время
+            <input id="f-time" type="datetime-local" required />
+          </label>
+          <label class="full">Ответ пользователя
+            <textarea id="f-answer" rows="2" placeholder="Сюда можно вставить полный ответ пользователя"></textarea>
+          </label>
+          <label class="full">Ожидаемый ответ / примечание
+            <textarea id="f-expected" rows="2" placeholder="Эталон, подсказка или комментарий проверяющего"></textarea>
+          </label>
+          <div class="full actions">
+            <button type="submit" class="btn">Добавить запись</button>
+            <button type="button" id="seed-demo" class="btn ghost">Заполнить демо-данными</button>
+            <button type="button" id="export-json" class="btn ghost">Экспорт JSON</button>
+            <label class="import-label">
+              Импорт JSON
+              <input id="import-json" type="file" accept=".json,application/json" />
+            </label>
+            <button type="button" id="clear-all" class="btn danger">Очистить всё</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="grid charts">
+        <article class="card">
+          <h3>Прогресс курса 1 (уроки 1-8)</h3>
+          <canvas id="chart-lessons"></canvas>
+        </article>
+        <article class="card">
+          <h3>Топ пользователей по баллам</h3>
+          <canvas id="chart-users"></canvas>
+        </article>
+      </section>
+
+      <section class="card">
+        <h3>Таблица результатов</h3>
+        <div class="toolbar">
+          <input id="search-user" placeholder="Фильтр по имени пользователя" />
+          <select id="filter-lesson">
+            <option value="">Все уроки</option>
+          </select>
+          <select id="filter-correct">
+            <option value="">Все ответы</option>
+            <option value="correct">Верно</option>
+            <option value="partial">Частично</option>
+            <option value="incorrect">Неверно</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Пользователь</th>
+                <th>Урок</th>
+                <th>Тип</th>
+                <th>Баллы</th>
+                <th>Звезды</th>
+                <th>Ответ</th>
+                <th>Длительность</th>
+                <th>Время</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="results-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Локальный доступ для других устройств</h3>
+        <ol>
+          <li>Запусти сайт на своем ПК: <code>python -m http.server 8891 --bind 0.0.0.0</code></li>
+          <li>Узнай свой локальный IP (например, <code>192.168.1.50</code>).</li>
+          <li>Отправь ссылку другим в той же сети: <code>http://ТВОЙ_IP:8891</code>.</li>
+          <li>Если нужно открыть вне локальной сети без сервера, используй туннель (ngrok/localtunnel/cloudflared).</li>
+        </ol>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
