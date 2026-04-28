@@ -25,12 +25,42 @@ pip install -r requirements.txt
    - `OPENAI_API_KEY`
    - (опционально) `OPENAI_MODEL`, `OPENAI_TTS_MODEL`, `OPENAI_TTS_VOICE`
    - (при проблемах с сетью) `TELEGRAM_PROXY_URL`, например `http://127.0.0.1:10809`
+   - (для автосинхронизации лидерборда) `RESULTS_API_URL`, `RESULTS_API_KEY`, `COURSE_DEFAULT_LESSON`
 
 ## Запуск
 
 ```bash
 python bot.py
 ```
+
+## Results API (автосинхронизация с лидербордом)
+
+Запуск API локально:
+
+```bash
+uvicorn results_api:app --host 0.0.0.0 --port 8000
+```
+
+Эндпоинты:
+- `GET /api/health`
+- `GET /api/results`
+- `POST /api/results` (при включенном `RESULTS_API_KEY` нужен заголовок `x-api-key`)
+
+## Веб-лидерборд
+
+Файлы: `leaderboard/`.
+
+Локальный запуск:
+
+```bash
+python -m http.server 8891 --bind 0.0.0.0 --directory leaderboard
+```
+
+Чтобы лидерборд автоматически тянул данные из API:
+1. Открой `leaderboard/config.js`
+2. Укажи:
+   - `window.NEOLINGO_API_URL = "https://<your-results-api>.up.railway.app"`
+   - `window.NEOLINGO_API_KEY = "<key-if-required>"`
 
 Бот запускается локально через long polling (сервер/хостинг не нужен).
 Нужны только валидные ключи в `.env` и сетевой доступ до:

@@ -4,12 +4,20 @@
     "Урок 5", "Урок 6", "Урок 7", "Урок 8",
   ];
   var STORAGE_KEY = "neolingo_results_v1";
+  var API_URL = (window.NEOLINGO_API_URL || "").trim().replace(/\/$/, "");
+  var API_KEY = (window.NEOLINGO_API_KEY || "").trim();
   var records = [];
   var chartLessons = null;
   var chartUsers = null;
 
   function byId(id) { return document.getElementById(id); }
-  function load() {
+  function buildHeaders() {
+    var h = { "Content-Type": "application/json" };
+    if (API_KEY) h["x-api-key"] = API_KEY;
+    return h;
+  }
+
+  function loadLocal() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       records = raw ? JSON.parse(raw) : [];
@@ -17,7 +25,19 @@
       records = [];
     }
   }
-  function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(records)); }
+  function saveLocal() { localStorage.setItem(STORAGE_KEY, JSON.stringify(records)); }
+
+  async function loadFromApi() {
+    if (!API_URL) return false;
+    try {
+      var resp = await fetch(API_URL + "/api/results?limit=2000");
+      if (!resp.ok) return false;
+      records = await resp.json();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   function lessonName(index) { return LESSONS[Number(index) - 1] || ("Урок " + index); }
 
@@ -38,14 +58,32 @@
   }
 
   function addRecord(item) {
+    if (API_URL) {
+      fetch(API_URL + "/api/results", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(item),
+      })
+        .then(function () { refresh(); })
+        .catch(function () {
+          records.push(item);
+          saveLocal();
+          render();
+        });
+      return;
+    }
     records.push(item);
-    save();
+    saveLocal();
     render();
   }
 
   function deleteRecord(id) {
+    if (API_URL) {
+      alert("Удаление записей в API-режиме отключено для безопасности.");
+      return;
+    }
     records = records.filter(function (x) { return x.id !== id; });
-    save();
+    saveLocal();
     render();
   }
 
@@ -216,7 +254,7 @@
         var incoming = JSON.parse(reader.result);
         if (!Array.isArray(incoming)) return;
         records = incoming;
-        save();
+        saveLocal();
         render();
       } catch (_) {}
     };
@@ -267,13 +305,18 @@
     byId("clear-all").addEventListener("click", function () {
       if (!confirm("Удалить все локальные записи?")) return;
       records = [];
-      save();
+      saveLocal();
       render();
     });
   }
 
+  async function refresh() {
+    var ok = await loadFromApi();
+    if (!ok) loadLocal();
+    render();
+  }
+
   fillLessonSelects();
-  load();
   wireEvents();
-  render();
+  refresh();
 })();

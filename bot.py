@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
 from dotenv import load_dotenv
 from openai import OpenAI
 from telegram import InputFile, Update
@@ -48,6 +49,9 @@ TELEGRAM_READ_TIMEOUT = float(os.getenv("TELEGRAM_READ_TIMEOUT", "30"))
 TELEGRAM_WRITE_TIMEOUT = float(os.getenv("TELEGRAM_WRITE_TIMEOUT", "30"))
 TELEGRAM_POOL_TIMEOUT = float(os.getenv("TELEGRAM_POOL_TIMEOUT", "10"))
 TELEGRAM_BOOTSTRAP_RETRIES = int(os.getenv("TELEGRAM_BOOTSTRAP_RETRIES", "5"))
+RESULTS_API_URL = os.getenv("RESULTS_API_URL", "").strip()
+RESULTS_API_KEY = sanitize_secret(os.getenv("RESULTS_API_KEY", ""))
+COURSE_DEFAULT_LESSON = os.getenv("COURSE_DEFAULT_LESSON", "1").strip() or "1"
 
 
 if not TELEGRAM_BOT_TOKEN:
@@ -86,6 +90,7 @@ class SessionState:
     points: int = 0
     phase: str = "idle"
     used_yojijukugo: List[str] = field(default_factory=list)
+    lesson: str = "1"
 
 
 USER_STATE: Dict[int, SessionState] = {}
@@ -93,13 +98,38 @@ USER_STATE: Dict[int, SessionState] = {}
 
 def get_state(user_id: int) -> SessionState:
     if user_id not in USER_STATE:
-        USER_STATE[user_id] = SessionState()
+        USER_STATE[user_id] = SessionState(lesson=COURSE_DEFAULT_LESSON)
     return USER_STATE[user_id]
 
 
 def normalize(s: str) -> str:
     s = s.strip().lower()
     return re.sub(r"\s+", "", s)
+
+
+def display_user_name(update: Update) -> str:
+    user = update.effective_user
+    if not user:
+        return "unknown"
+    if user.username:
+        return user.username
+    full_name = " ".join([x for x in [user.first_name, user.last_name] if x]).strip()
+    if full_name:
+        return full_name
+    return f"user_{user.id}"
+
+
+async def publish_result(payload: Dict[str, Any]) -> None:
+    if not RESULTS_API_URL:
+        return
+    headers = {}
+    if RESULTS_API_KEY:
+        headers["x-api-key"] = RESULTS_API_KEY
+    try:
+        async with httpx.AsyncClient(timeout=8) as api_client:
+            await api_client.post(f"{RESULTS_API_URL.rstrip('/')}/api/results", json=payload, headers=headers)
+    except Exception as exc:
+        logger.warning("Failed to publish result to API: %s", exc)
 
 
 def ai_json(prompt: str) -> Dict[str, Any]:
@@ -316,7 +346,7 @@ async def score(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    USER_STATE[user_id] = SessionState()
+    USER_STATE[user_id] = SessionState(lesson=COURSE_DEFAULT_LESSON)
     await update.message.reply_text("Прогресс сброшен. Можешь отправить новый текст.")
 
 
@@ -327,10 +357,19 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         openai_state = "ok"
     except Exception as exc:
         openai_state = f"error: {exc}"
+    api_state = "disabled"
+    if RESULTS_API_URL:
+        try:
+            async with httpx.AsyncClient(timeout=6) as api_client:
+                resp = await api_client.get(f"{RESULTS_API_URL.rstrip('/')}/api/health")
+                api_state = "ok" if resp.status_code == 200 else f"http_{resp.status_code}"
+        except Exception as exc:
+            api_state = f"error: {exc}"
     await update.message.reply_text(
         "Проверка подключения:\n"
         f"- Telegram proxy: {proxy_state}\n"
-        f"- OpenAI API: {openai_state}"
+        f"- OpenAI API: {openai_state}\n"
+        f"- Results API: {api_state}"
     )
 
 
@@ -404,6 +443,20 @@ async def finish_session(update: Update, state: SessionState) -> None:
         f"Пример: {example_jp}\n"
         f"Перевод: {example_ru}"
     )
+    await publish_result(
+        {
+            "user": display_user_name(update),
+            "lesson": state.lesson,
+            "type": "session_summary",
+            "points": state.points,
+            "stars": state.stars,
+            "correct": "correct",
+            "duration": 0,
+            "answer": f"rank={rank}",
+            "expected": "",
+            "source": "telegram_bot",
+        }
+    )
 
 
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -418,12 +471,28 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         q = state.vocab_questions[state.vocab_idx]
         user_ans = normalize(incoming)
         valid_answers = [normalize(q.correct_answer)] + [normalize(a) for a in q.alt_answers]
+        verdict = "incorrect"
         if user_ans in valid_answers:
             state.stars += 1
             state.points += 2
+            verdict = "correct"
             await update.message.reply_text("✅ Верно! +1⭐ и +2 балла")
         else:
             await update.message.reply_text(f"❌ Неверно. Правильно: {q.correct_answer}")
+        await publish_result(
+            {
+                "user": display_user_name(update),
+                "lesson": state.lesson,
+                "type": "vocab_quiz",
+                "points": 2 if verdict == "correct" else 0,
+                "stars": 1 if verdict == "correct" else 0,
+                "correct": verdict,
+                "duration": 0,
+                "answer": incoming,
+                "expected": q.correct_answer,
+                "source": "telegram_bot",
+            }
+        )
         state.vocab_idx += 1
         await run_vocab_question(update, state)
         return
@@ -450,12 +519,27 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if feedback:
                 text += f"\nКомментарий: {feedback}"
             await update.message.reply_text(text)
+        await publish_result(
+            {
+                "user": display_user_name(update),
+                "lesson": state.lesson,
+                "type": "logic_quiz",
+                "points": 4 if verdict == "correct" else (2 if verdict == "partial" else 0),
+                "stars": 0,
+                "correct": verdict,
+                "duration": 0,
+                "answer": incoming,
+                "expected": q.answer,
+                "source": "telegram_bot",
+            }
+        )
         state.logic_idx += 1
         await run_logic_question(update, state)
         return
 
     try:
         state.source_text = incoming
+        state.lesson = COURSE_DEFAULT_LESSON
         await update.message.reply_text("Анализирую текст и готовлю перевод с учебными материалами...")
 
         data = analyze_text_for_japanese_learning(incoming)
@@ -472,6 +556,20 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(f"Перевод на японский:\n\n{state.japanese_text}")
         if comment_ru:
             await update.message.reply_text(f"Комментарий: {comment_ru}")
+        await publish_result(
+            {
+                "user": display_user_name(update),
+                "lesson": state.lesson,
+                "type": "translation",
+                "points": 0,
+                "stars": 0,
+                "correct": "correct",
+                "duration": 0,
+                "answer": state.japanese_text,
+                "expected": "",
+                "source": "telegram_bot",
+            }
+        )
 
         if state.vocab:
             lines = []
